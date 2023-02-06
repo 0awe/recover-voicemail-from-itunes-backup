@@ -1,0 +1,66 @@
+#!/bin/sh
+#
+# The following variables MUST be set to match your environment.
+#
+UDIR="/Users/UID"		# UID should be your username.
+SQLITE="$UDIR/bin/sqlite3"	# Location of sqlite3 binary.
+OUTDIR="$UDIR/Voicemails"	# Directory where any recovered voicemails will be saved to.
+#
+# The following variable only needs to be changed if your iTunes backup is in other than default location.
+#
+BUDIR="$UDIR/Library/Application Support/MobileSync/Backup"
+#
+# Main code (shouldn't need any user modification)
+#
+cd "$BUDIR"
+
+log() {
+  echo "[$(date "+%Y-%m-%d %H:%M:%S")] $1"
+}
+
+dbquery() {
+  log "Quering voicemail database in $DVDIR. This may take a while..."
+  $SQLITE ./$DVDIR/99/992df473bbb9e132f4b3b6e4d33f72171e97bc7a <<EOF
+attach database './$DVDIR/Manifest.db' as mf;
+--.databases
+.separator ','
+.output vmlist.csv
+select substr(mf.fileid, 1, 2) || '/' || mf.fileid as oldfn, trim(vm.sender,"+") || '-' || strftime('%Y%m%d-%H%M%S', datetime(vm.date + strftime('%s', '1970-01-01 00:00:00'), 'unixepoch', 'localtime')) || '.amr' as newfn from mf.files mf,main.voicemail vm where mf.relativepath regexp '/Voicemail/' || vm.rowid || '.amr$';
+.quit
+EOF
+}
+
+get_vms() {
+  FOUND=`cat "$BUDIR/vmlist.csv" | wc -l | xargs`
+
+  if [ "$FOUND" == "0" ]; then
+    log "No voicemails have been found."
+    return
+  fi
+
+  if [ ! -d "$OUTDIR" ]; then
+    log "Creating output directory ($OUTDIR)."
+    mkdir "$OUTDIR"
+  fi
+
+  log "Found $FOUND voicemails to recover."
+  for IN in `cat "$BUDIR/vmlist.csv"`; do
+    arrIN=(${IN//,/ })
+    if [ ! -z ${arrIN[1]} ]; then
+      echo ".\c"
+      cp -n "$BUDIR/$DVDIR/${arrIN[0]}" "$OUTDIR/${arrIN[1]}"
+    fi
+  done
+  echo
+}
+
+for DVDIR in `ls -d */`; do
+  if [ -f "./$DVDIR/99/992df473bbb9e132f4b3b6e4d33f72171e97bc7a" ]; then
+    dbquery
+    get_vms
+  else
+    log "No voicemail database found in $DVDIR."
+  fi
+done
+
+log "Done! Any recovered voicemail files are in $OUTDIR."
